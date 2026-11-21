@@ -219,7 +219,7 @@ const nPending = () => Object.keys(sync.out).length;
 function setSync(level, text){ store.level = level; store.status = text; const el = $('#sync'); if(!el) return; el.className = 'sync ' + level; el.querySelector('span').textContent = text; }
 function refreshStatus(){
   const n = nPending();
-  const da = n === 1 ? '1 modifica da inviare' : `${n} modifiche da inviare`;
+  const da = `${n} da inviare`;
   if(!CLOUD) return setSync('warn', 'Solo su questo telefono');
   if(store.codeBad) return setSync('err', n ? `Codice non valido · ${da}` : 'Codice non valido');
   if(!store.net || navigator.onLine === false) return setSync('warn', n ? `Offline · ${da}` : 'Offline · dati sul telefono');
@@ -331,6 +331,31 @@ async function pull(){
   } catch(e){ store.net = false; refreshStatus(); }
 }
 
+/* accessi: ogni telefono segnala in modo anonimo che sta usando l'app (tabella bey_accessi,
+   consultabile solo dal pannello Supabase). Un'apertura all'avvio o al ritorno dopo 30 min,
+   poi al massimo un segnale ogni 5 min finché l'app è in primo piano. Errori ignorati. */
+const LS_DEV = 'beyblade-arena.dispositivo';
+let lastPing = 0, pingNew = true, hiddenAt = 0;
+function deviceId(){
+  let d = lsGet(LS_DEV);
+  if(!d || !/^[A-Za-z0-9_-]{8,40}$/.test(d)){ d = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); lsSet(LS_DEV, d); }
+  return d;
+}
+function deviceType(){
+  const u = navigator.userAgent || '';
+  const os = /iPhone|iPod/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Macintosh/.test(u) ? 'Mac' : 'Altro';
+  const app = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  return os + (app ? ' · app' : ' · browser');
+}
+function ping(){
+  if(!CLOUD || document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if(!pingNew && now - lastPing < 5 * 60000) return;
+  const nuova = pingNew; lastPing = now; pingNew = false;
+  rpc('bey_ping', {p_dev:deviceId(), p_tipo:deviceType(), p_ua:(navigator.userAgent || '').slice(0, 300), p_modifica:!!code, p_nuova:nuova})
+    .catch(() => { lastPing = 0; pingNew = pingNew || nuova; });
+}
+
 /* niente ridisegno mentre si scrive in un campo o è aperto un foglio: si rimanda */
 function safeRender(){
   const a = document.activeElement;
@@ -347,10 +372,14 @@ function initStore(){
   store.loaded = !CLOUD || !!cache;
   refreshStatus(); render();
   if(!CLOUD) return;
-  const tick = () => { if(document.visibilityState === 'visible'){ pull(); flush(); } };
-  pull().then(flush);
+  const tick = () => { if(document.visibilityState === 'visible'){ pull(); flush(); ping(); } };
+  pull().then(flush).then(ping);
   setInterval(tick, 15000);
-  document.addEventListener('visibilitychange', tick);
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else if(hiddenAt && Date.now() - hiddenAt > 30 * 60000) pingNew = true;
+    tick();
+  });
   window.addEventListener('online', () => { store.net = true; tick(); });
   window.addEventListener('offline', () => { store.net = false; refreshStatus(); });
 }
