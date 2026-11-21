@@ -1,0 +1,11 @@
+name: Supabase keep-alive
+on:
+  schedule:
+    - cron: "23 7 * * 1,4"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s "https://zpevmegvxksuvmywwqjz.supabase.co/rest/v1/bey_lega?select=id" -H "apikey: sb_publishable_PgB4kG4L_pz90JQIr1LJlg__3E5A6tC"

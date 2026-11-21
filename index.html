@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffc800">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Bey Arena">
+<title>Beyblade Arena</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=fad2e8103a">
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand" id="brand">Beyblade Arena</div>
+    <div class="sync" id="sync"><i></i><span>Caricamento…</span></div>
+  </header>
+  <main id="view"></main>
+</div>
+<nav class="tabs" aria-label="Sezioni"><div class="in" id="tabs"></div></nav>
+<div class="sheet" id="sheet" hidden><div class="bg" data-act="closeSheet"></div><div class="card" id="sheetCard" role="dialog" aria-modal="true"></div></div>
+<div id="toast" hidden role="status"><span id="toastMsg"></span><button id="toastBtn" type="button">Annulla</button></div>
+<script src="config.js?v=52235f61ba"></script>
+<script src="beys.js?v=16f096502e"></script>
+<script src="app.js?v=aedb1526e8"></script>
+</body>
+</html>
