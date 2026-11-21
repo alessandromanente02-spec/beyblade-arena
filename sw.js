@@ -1,7 +1,7 @@
 // Beyblade Arena - service worker: rete prima (si vede subito la versione nuova),
 // cache come riserva per giocare offline. I dati non passano da qui: li gestisce app.js
 // (localStorage + coda di invio), e Supabase non viene mai messo in cache.
-const CACHE = "beyblade-arena-v1";
+const CACHE = "beyblade-arena-v2";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "beys.js", "config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/favicon-32.png"];
 const EXTRA = ["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"];

@@ -18,7 +18,7 @@ const FORMATS = {
 /* ================= STATO ================= */
 let L = {players:[], settings:{weights:{...DEF_W}}};
 let T = {};
-let ui = {tab:'live', liveSub:null, scope:'all', blader:null, tour:null, full:false};
+let ui = {tab:'live', liveSub:null, scope:'all', blader:null, openAnim:null, tour:null, full:false};
 const store = {writable:true, status:'Caricamento…', level:'', loaded:false, net:true, codeBad:false, flushing:false};
 
 /* ================= UTIL ================= */
@@ -34,7 +34,7 @@ const pcol = id => player(id).color;
 const AV_SIZE = {sm:30, lg:78, xl:112};
 const av = (id, cls='') => {
   const p = player(id); const k = cls.split(/\s+/).find(x => AV_SIZE[x]);
-  return `<span class="av ${cls}" title="${esc(p.name)}">${beySVG(p.bey, p.color, {size: AV_SIZE[k] || 40, spin: /\bspin\b/.test(cls)})}</span>`;
+  return `<span class="av ${cls}" style="--c:${esc(p.color)}" title="${esc(p.name)}">${beySVG(p.bey, p.color, {size: AV_SIZE[k] || 40, spin: /\bspin\b/.test(cls)})}</span>`;
 };
 const cname = id => `<span class="nm-c" style="--c:${esc(pcol(id))}">${esc(pname(id))}</span>`;
 const fmtDate = (d, o={day:'numeric', month:'short', year:'numeric'}) => { try { return new Date(d + 'T12:00:00').toLocaleDateString('it-IT', o); } catch(e) { return d; } };
@@ -510,7 +510,7 @@ function viewLive(){
   const hasKO = t.matches.some(m => m.phase !== 'G');
   const sub = ui.liveSub || (hasKO ? 'ko' : 'g');
   const head = `<div class="card stack">
-    <div class="row"><div class="grow"><div class="eyebrow">Torneo in corso</div><h2 style="font-size:30px">${esc(fmtDate(t.date, {weekday:'long', day:'numeric', month:'long'}))}</h2></div>
+    <div class="row"><div class="grow"><div class="eyebrow">Torneo in corso</div><h2 style="font-size:21px">${esc(fmtDate(t.date, {weekday:'long', day:'numeric', month:'long'}))}</h2></div>
       ${store.writable ? `<button class="btn" data-act="tourMenu" data-t="${t.id}" aria-label="Opzioni torneo">•••</button>` : ''}</div>
     <div class="row small muted"><span class="grow">${t.players.length} blader · girone ${done}/${G.length}</span>${hasKO ? `<span>fase finale ${t.matches.filter(m=>m.phase!=='G'&&played(m)).length}/${t.matches.filter(m=>m.phase!=='G').length}</span>` : ''}</div>
     <div class="progress"><i style="width:${G.length ? done / G.length * 100 : 0}%"></i></div>
@@ -523,7 +523,7 @@ function viewLive(){
   }
   if(sub === 'ko'){
     if(!hasKO){
-      return head + `<div class="card stack"><h2 style="font-size:26px">Fase finale</h2>
+      return head + `<div class="card stack"><h2 style="font-size:20px">Fase finale</h2>
         <p class="muted" style="margin:0">${groupDone ? 'Girone completato: genera il tabellone dalla classifica.' : `Mancano ${G.length - done} sfide del girone. Puoi comunque generare il tabellone con la classifica attuale.`}</p>
         ${store.writable ? `<button class="btn ${groupDone ? 'primary' : ''} block" data-act="koSetup" data-t="${t.id}">Genera fase finale</button>` : ''}</div>`;
     }
@@ -603,35 +603,46 @@ function trendChart(s){
   const W = 320, H = 150, pl = 32, pr = 10, pt = 10, pb = 24;
   const x = i => pl + (pts.length === 1 ? 0 : i * (W - pl - pr) / (pts.length - 1));
   const y = v => pt + (1 - v) * (H - pt - pb);
-  const line = (vals, col, dash) => `<polyline fill="none" stroke="${col}" stroke-width="3" stroke-linejoin="round" ${dash ? 'stroke-dasharray="5 4"' : ''} points="${vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>` + vals.map((v, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${i === vals.length - 1 ? 5 : 3.5}" fill="${col}" stroke="#1b1530" stroke-width="1.5"/>`).join('');
+  const line = (vals, col, dash) => `<polyline fill="none" stroke="${col}" stroke-width="3" stroke-linejoin="round" ${dash ? 'stroke-dasharray="5 4"' : ''} points="${vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>` + vals.map((v, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${i === vals.length - 1 ? 5 : 3.5}" fill="${col}" stroke="#0b0e22" stroke-width="1.5"/>`).join('');
   const wr = pts.map(p => p.W / p.M), pe = pts.map(p => p.PF / (4 * p.M));
   const col = pcol(s.id);
   const area = `<polygon fill="${esc(col)}" opacity=".2" points="${x(0)},${y(0)} ${wr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')} ${x(pts.length-1)},${y(0)}"/>`;
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Andamento per torneo">
-    ${[0, .5, 1].map(v => `<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="#e9dcc0" stroke-width="1.5"/><text x="${pl-6}" y="${y(v)+3}" text-anchor="end">${v*100}%</text>`).join('')}
+    ${[0, .5, 1].map(v => `<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="#2a3168" stroke-width="1.5"/><text x="${pl-6}" y="${y(v)+3}" text-anchor="end">${v*100}%</text>`).join('')}
     ${pts.map((p, i) => `<text x="${x(i)}" y="${H-6}" text-anchor="middle">${esc(fmtDate(p.date, {day:'numeric', month:'numeric'}))}</text>`).join('')}
-    ${area}${line(wr, esc(col))}${line(pe, '#6e6283', true)}
+    ${area}${line(wr, esc(col))}${line(pe, '#9aa3d0', true)}
   </svg><div class="row small muted" style="gap:16px"><span><b style="color:${esc(col)}">━</b> Win rate</span><span><b>┅</b> Pericolosità</span></div>`;
 }
 
 function viewBlader(){
   const S = accumulate(toursSorted());
-  const list = L.players.filter(p => S[p.id]).map(p => S[p.id]).sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+  const list = L.players.filter(p => S[p.id]).map(p => S[p.id]).sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
   if(!list.length) return `<div class="card muted">Nessuna partita giocata.</div>`;
-  if(!ui.blader || !S[ui.blader]) ui.blader = list[0].id;
-  const s = S[ui.blader];
-  const picker = `<label class="f" for="bladerPick">Blader
-    <select id="bladerPick">${list.map((x, i) => `<option value="${x.id}" ${x.id === s.id ? 'selected' : ''}>${i + 1}. ${esc(pname(x.id))} · rating ${x.rating == null ? '—' : Math.round(x.rating)}</option>`).join('')}</select></label>`;
-  const ranked = Object.values(S).sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
-  const pos = ranked.findIndex(x => x.id === s.id) + 1;
+  if(ui.blader && !S[ui.blader]) ui.blader = null;
+  return `<div class="sec-h"><h2>Blader</h2><span class="small muted">tocca per le statistiche</span></div>
+    <div class="blist">${list.map((s, i) => {
+      const open = ui.blader === s.id;
+      return `<div class="bl ${open ? 'open' : ''}" id="bl-${esc(s.id)}" style="--c:${esc(pcol(s.id))}">
+        <button class="bl-h" data-act="toggleBlader" data-v="${esc(s.id)}" aria-expanded="${open}">
+          <span class="n">${i + 1}</span>${av(s.id, open ? 'spin' : '')}
+          <span class="grow"><span class="nm">${esc(pname(s.id))}</span>
+            <span class="meta"><span>${s.W}V ${s.L}S</span><span>${s.titles} ${s.titles === 1 ? 'titolo' : 'titoli'}</span><span>${s.nTours} ${s.nTours === 1 ? 'torneo' : 'tornei'}</span></span></span>
+          <span class="rt">${s.rating == null ? '—' : Math.round(s.rating)}<small>RATING</small></span>
+          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        ${open ? `<div class="bl-b ${ui.openAnim === s.id ? 'anim' : ''}">${bladerDetail(s, i + 1)}</div>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+}
+
+function bladerDetail(s, pos){
   const col = pcol(s.id);
   const model = (typeof BEY_MODELS !== 'undefined' ? BEY_MODELS : []).find(m => m.id === player(s.id).bey);
   const metric = (k, q, v, frac) => `<div class="metric"><span class="k">${k}</span><span class="v">${v}</span><span class="q">${q}</span><span class="bar" style="--c:${esc(col)}"><i style="width:${frac == null ? 0 : Math.max(0, Math.min(1, frac)) * 100}%"></i></span></div>`;
   const opp = Object.entries(s.h2h).map(([id, h]) => ({id, ...h, M:h.W + h.L})).sort((a, b) => b.M - a.M);
   const nem = opp.filter(o => o.M >= 2).sort((a, b) => a.W / a.M - b.W / b.M)[0];
   const fav = opp.filter(o => o.M >= 2).sort((a, b) => b.W / b.M - a.W / a.M)[0];
-  return `${picker}
-    <div class="card hero" style="--c:${esc(col)}">${av(s.id,'lg spin')}<div><h1>${esc(pname(s.id))}</h1><div class="small">${pos}° nel ranking · ${s.nTours} ${s.nTours === 1 ? 'torneo' : 'tornei'}${model ? ` · ${esc(model.name)}` : ''}</div></div>
+  return `<div class="hero">${av(s.id,'lg spin')}<div><h1>${esc(pname(s.id))}</h1><div class="small">${pos}° nel ranking · ${s.nTours} ${s.nTours === 1 ? 'torneo' : 'tornei'}${model ? ` · ${esc(model.name)}` : ''}</div></div>
       <div class="big"><b>${s.rating == null ? '—' : Math.round(s.rating)}</b><span>RATING</span></div></div>
     <div class="tiles">
       <div class="tile"><b>${s.titles}</b><span>Titoli</span></div>
@@ -653,12 +664,12 @@ function viewBlader(){
     <div class="sec-h"><h2>Andamento</h2></div>
     <div class="card">${trendChart(s)}</div>
     ${nem || fav ? `<div class="tiles" style="grid-template-columns:1fr 1fr">
-      ${fav ? `<div class="tile"><span>Vittima preferita</span><div class="row" style="margin-top:6px">${av(fav.id,'sm')}<b style="font-size:22px">${esc(pname(fav.id))}</b></div><span>${fav.W}–${fav.L}</span></div>` : ''}
-      ${nem ? `<div class="tile"><span>Bestia nera</span><div class="row" style="margin-top:6px">${av(nem.id,'sm')}<b style="font-size:22px">${esc(pname(nem.id))}</b></div><span>${nem.W}–${nem.L}</span></div>` : ''}
+      ${fav ? `<div class="tile"><span>Vittima preferita</span><div class="row" style="margin-top:6px">${av(fav.id,'sm')}<b style="font-size:17px">${esc(pname(fav.id))}</b></div><span>${fav.W}–${fav.L}</span></div>` : ''}
+      ${nem ? `<div class="tile"><span>Bestia nera</span><div class="row" style="margin-top:6px">${av(nem.id,'sm')}<b style="font-size:17px">${esc(pname(nem.id))}</b></div><span>${nem.W}–${nem.L}</span></div>` : ''}
     </div>` : ''}
     <div class="sec-h"><h2>Testa a testa</h2></div>
     <div class="card flush">${opp.map(o => `<div class="h2h">${av(o.id,'sm')}<div><b>${esc(pname(o.id))}</b><div class="split"><i style="width:${o.W / o.M * 100}%;background:var(--win)"></i><i style="width:${o.L / o.M * 100}%;background:var(--loss)"></i></div></div>
-      <div style="text-align:right"><b class="num" style="font-size:22px">${o.W}–${o.L}</b><div class="small muted">${o.PF}–${o.PA} pt</div></div></div>`).join('')}</div>`;
+      <div style="text-align:right"><b class="num" style="font-size:17px">${o.W}–${o.L}</b><div class="small muted">${o.PF}–${o.PA} pt</div></div></div>`).join('')}</div>`;
 }
 
 function viewHist(){
@@ -668,7 +679,7 @@ function viewHist(){
   const champs = {};
   tours.forEach(t => { if(t.champion) champs[t.champion] = (champs[t.champion] || 0) + 1; });
   return `<div class="sec-h"><h2>Albo d'oro</h2></div>
-    <div class="chips">${Object.entries(champs).sort((a, b) => b[1] - a[1]).map(([id, n]) => `<span class="chip">${av(id,'sm')}${esc(pname(id))} <b class="num" style="font-size:18px">×${n}</b></span>`).join('')}</div>
+    <div class="chips">${Object.entries(champs).sort((a, b) => b[1] - a[1]).map(([id, n]) => `<span class="chip">${av(id,'sm')}${esc(pname(id))} <b class="num" style="font-size:15px">×${n}</b></span>`).join('')}</div>
     <div class="sec-h"><h2>Tornei</h2><span class="small muted">${tours.length}</span></div>
     <div class="card flush">${tours.map(t => {
       const f = t.matches.find(m => m.phase === 'F');
@@ -687,7 +698,7 @@ function viewTour(t){
   const sfLosers = t.matches.filter(m => m.phase === 'SF' && played(m)).map(loserOf);
   const G = t.matches.filter(m => m.phase === 'G');
   return `<button class="link row" data-act="tour" data-v="" style="gap:4px">${ICON.back} Tutti i tornei</button>
-    <div class="row"><div class="grow"><div class="eyebrow">${t.status === 'live' ? 'In corso' : 'Torneo'}</div><h1 style="font-size:34px">${esc(fmtDate(t.date, {weekday:'long', day:'numeric', month:'long', year:'numeric'}))}</h1></div></div>
+    <div class="row"><div class="grow"><div class="eyebrow">${t.status === 'live' ? 'In corso' : 'Torneo'}</div><h1 style="font-size:22px">${esc(fmtDate(t.date, {weekday:'long', day:'numeric', month:'long', year:'numeric'}))}</h1></div></div>
     ${t.champion ? `<div class="card"><div class="podium">
       <div class="p2">${played(f) ? av(loserOf(f)) + `<b>${esc(pname(loserOf(f)))}</b>` : ''}<div class="st">2</div></div>
       <div class="p1">${av(t.champion,'lg spin')}<b>${esc(pname(t.champion))}</b><div class="st">1</div></div>
@@ -744,6 +755,17 @@ function render(){
 }
 
 /* ================= EVENTI ================= */
+// Pagina Blader: apre (o chiude, con id null) la scheda di un blader e la porta in vista.
+function openBlader(id){
+  const same = ui.tab === 'blader';
+  ui.blader = id; ui.tab = 'blader'; ui.openAnim = id;
+  render(); ui.openAnim = null;
+  const el = id && document.getElementById('bl-' + id);
+  if(el){
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({block:'start', behavior: same && !reduce ? 'smooth' : 'auto'});
+  } else if(!same) window.scrollTo(0, 0);
+}
 function styleSheet(pid){
   const p = L.players.find(x => x.id === pid); if(!p) return;
   openSheet(`<h2>${esc(p.name)}</h2>
@@ -760,7 +782,8 @@ const ACT = {
   liveSub: el => { ui.liveSub = el.dataset.v; render(); },
   scope: el => { ui.scope = el.dataset.v; render(); },
   full: el => { ui.full = el.dataset.v === '1'; render(); },
-  blader: el => { ui.blader = el.dataset.v || null; ui.tab = 'blader'; render(); window.scrollTo(0, 0); },
+  blader: el => { openBlader(el.dataset.v || null); },
+  toggleBlader: el => { openBlader(ui.blader === el.dataset.v ? null : el.dataset.v); },
   tour: el => { ui.tour = el.dataset.v || null; render(); window.scrollTo(0, 0); },
   closeSheet: () => closeSheet(),
   res: el => setResult(el.dataset.t, el.dataset.m, +el.dataset.sa, +el.dataset.sb),
@@ -770,7 +793,7 @@ const ACT = {
     const isKO = m.phase !== 'G';
     const pick = (side, cur) => `<select id="pick_${side}">${['<option value="">—</option>'].concat(t.players.map(p => `<option value="${p}" ${p === cur ? 'selected' : ''}>${esc(pname(p))}</option>`)).join('')}</select>`;
     openSheet(`<div class="eyebrow">${PH_LABEL[m.phase]}</div>
-      ${m.a && m.b ? `<div class="vs"><div class="p">${av(m.a)}<b style="font-size:22px">${esc(pname(m.a))}</b></div><div class="x">${played(m) ? `<span class="num" style="font-size:30px;color:var(--text);-webkit-text-stroke:0;text-shadow:none">${m.sa}–${m.sb}</span>` : 'VS'}</div><div class="p">${av(m.b)}<b style="font-size:22px">${esc(pname(m.b))}</b></div></div>
+      ${m.a && m.b ? `<div class="vs"><div class="p">${av(m.a)}<b style="font-size:17px">${esc(pname(m.a))}</b></div><div class="x">${played(m) ? `<span class="num" style="font-size:24px;color:var(--text);-webkit-text-stroke:0;text-shadow:none">${m.sa}–${m.sb}</span>` : 'VS'}</div><div class="p">${av(m.b)}<b style="font-size:17px">${esc(pname(m.b))}</b></div></div>
       ${scorepad(t, m)}` : ''}
       ${played(m) ? `<button class="btn danger" data-act="clearRes" data-t="${t.id}" data-m="${m.id}">Cancella risultato</button>` : ''}
       ${isKO ? `<details ${m.a && m.b ? '' : 'open'}><summary>Cambia blader</summary><div class="stack" style="margin-top:10px">
@@ -887,7 +910,6 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
-  if(el.id === 'bladerPick'){ ui.blader = el.value; render(); return; }
   if(el.dataset.w){ L.settings = {...(L.settings || {}), weights:{...weights(), [el.dataset.w]:+el.value}}; saveLeague(); render(); }
   if(el.dataset.rename){ const p = L.players.find(x => x.id === el.dataset.rename); const v = el.value.trim(); if(p && v && v !== p.name){ p.name = v; saveLeague(); render(); } }
 });
@@ -936,7 +958,7 @@ async function exportXlsx(){
 }
 
 /* ================= AVVIO ================= */
-$('#brand').innerHTML = beySVG('fulmine', '#ff3d68', {size:34, spin:true, cls:'slow'}) + '<span>Beyblade Arena</span>';
+$('#brand').innerHTML = beySVG('fulmine', '#ff3d68', {size:34, spin:true, cls:'slow'}) + '<span class="bt"><small aria-hidden="true">ベイブレード・アリーナ</small>Beyblade Arena</span>';
 initStore();
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
