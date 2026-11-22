@@ -121,6 +121,62 @@ function standings(t, phases = ['G']){
   return Object.values(rows).sort((x, y) => y.W - x.W || y.PF - x.PF || (y.PF - y.PA) - (x.PF - x.PA) || h2h(x.id, y.id) || pname(x.id).localeCompare(pname(y.id)));
 }
 
+/* ---- sfida a confronto: precedenti, probabilità, punti forti e deboli, posta in gioco ----
+   Probabilità: modello sul singolo punto. Forza di ciascuno q = (PF+8)/(PF+PA+16) (verso 50% con pochi
+   dati), combinata con log5, poi spostata verso i punti degli scontri diretti con peso 12 (~3 partite).
+   Dal punto si ricava la distribuzione dei risultati ai 4 punti. */
+function pointProb(sa, sb, h){
+  const q = s => s && (s.PF + s.PA) ? (s.PF + 8) / (s.PF + s.PA + 16) : 0.5;
+  const qa = q(sa), qb = q(sb);
+  const p0 = qa * (1 - qb) / (qa * (1 - qb) + qb * (1 - qa));
+  const pf = h ? h.PF : 0, pa = h ? h.PA : 0;
+  return (pf + 12 * p0) / (pf + pa + 12);
+}
+// probabilità di ogni risultato dal punto di vista di a: '4-0'…'4-3' vince a, '0-4'…'3-4' vince b
+function raceDist(p){
+  const C = [1, 4, 10, 20], d = {};
+  for(let j = 0; j < 4; j++){ d['4-' + j] = C[j] * p ** 4 * (1 - p) ** j; d[j + '-4'] = C[j] * (1 - p) ** 4 * p ** j; }
+  return d;
+}
+const DUEL_STATS = [['wr', 'Percentuale di vittorie'], ['per', 'Pericolosità'], ['pres', 'Rendimento sotto pressione'], ['cleanRate', 'Vittorie per 4-0'], ['cons', 'Costanza']];
+function strongWeak(s){
+  const v = s ? DUEL_STATS.filter(([k]) => s[k] != null).map(([k, label]) => ({k, label, v:s[k]})) : [];
+  if(v.length < 2) return null;
+  v.sort((x, y) => y.v - x.v);
+  return {forte:v[0], debole:v[v.length - 1]};
+}
+// kind: 'G' = girone, 'KO' = qualsiasi fase finale (spareggio compreso)
+function matchup(S, tours, a, b, kind){
+  const prec = [];
+  for(const t of tours) for(const m of t.matches){
+    if(!played(m) || !((m.a === a && m.b === b) || (m.a === b && m.b === a))) continue;
+    const fa = m.a === a ? m.sa : m.sb, fb = m.a === a ? m.sb : m.sa;
+    prec.push({date:t.date, tid:t.id, phase:m.phase, kind:m.phase === 'G' ? 'G' : 'KO', fa, fb, win:fa > fb ? a : b});
+  }
+  prec.reverse();   // il più recente per primo
+  const bil = list => ({W:list.filter(x => x.win === a).length, L:list.filter(x => x.win === b).length});
+  let serie = null;
+  if(prec.length){ let n = 0; while(n < prec.length && prec[n].win === prec[0].win) n++; if(n >= 2) serie = {id:prec[0].win, n}; }
+  const p = pointProb(S[a], S[b], S[a] && S[a].h2h[b]);
+  const dist = raceDist(p);
+  const pWin = ['4-0', '4-1', '4-2', '4-3'].reduce((x, k) => x + dist[k], 0);
+  const top = Object.entries(dist).sort((x, y) => y[1] - x[1])[0];
+  return {prec, stessa:bil(prec.filter(x => x.kind === kind)), totale:bil(prec), serie, p, pWin, dist, likely:{score:top[0], prob:top[1]}};
+}
+// girone: posizione ora e dopo la sfida, per tutti i risultati possibili ([min, max])
+function groupStakes(t, m){
+  const pos = (tt, id) => standings(tt).findIndex(r => r.id === id) + 1;
+  const res = {[m.a]:{now:pos(t, m.a), win:[], lose:[]}, [m.b]:{now:pos(t, m.b), win:[], lose:[]}};
+  for(let x = 0; x < 4; x++) for(const [sa, sb] of [[4, x], [x, 4]]){
+    const c = clone(t), cm = c.matches.find(z => z.id === m.id); cm.sa = sa; cm.sb = sb;
+    const w = sa > sb ? m.a : m.b, l = sa > sb ? m.b : m.a;
+    res[w].win.push(pos(c, w)); res[l].lose.push(pos(c, l));
+  }
+  for(const r of Object.values(res)){ r.win = [Math.min(...r.win), Math.max(...r.win)]; r.lose = [Math.min(...r.lose), Math.max(...r.lose)]; }
+  return res;
+}
+const KO_STAKE = {SP:'Chi vince entra nella fase finale', QF:'Chi vince va in semifinale', E:'Chi vince va in semifinale', SF:'Chi vince va in finale', F:'Chi vince è campione'};
+
 /* ================= TORNEO: LOGICA ================= */
 function roundRobin(ids){
   const p = [...ids]; if(p.length % 2) p.push(null);
@@ -500,10 +556,71 @@ function vsBlock(m, size = 'lg', spin = true){
   return `<div class="vs"><div class="p">${av(m.a, size + (spin ? ' spin' : ''))}<b>${esc(pname(m.a))}</b></div><div class="x">VS</div><div class="p">${av(m.b, size + (spin ? ' spin' : ''))}<b>${esc(pname(m.b))}</b></div></div>`;
 }
 
+// "Sfida a confronto": sotto la sfida da giocare, prima della classifica
+function duelCard(t, m){
+  const a = m.a, b = m.b;
+  const tours = toursSorted(), S = accumulate(tours);
+  const kind = m.phase === 'G' ? 'G' : 'KO';
+  const mu = matchup(S, tours, a, b, kind);
+  const na = esc(pname(a)), nb = esc(pname(b));
+  const pa = Math.round(mu.pWin * 100);
+  const [x, y] = mu.likely.score.split('-').map(Number);
+  const likely = Math.abs(mu.pWin - 0.5) < 0.005 ? `${Math.max(x, y)}–${Math.min(x, y)} per l'uno o per l'altro, sfida in perfetto equilibrio`
+    : x > y ? `${x}–${y} per ${na}` : `${y}–${x} per ${nb}`;
+  const bil = (label, r) => `<div class="du-bil"><span>${label}</span><b><i style="color:var(--ca)">${na}</i> ${r.W} – ${r.L} <i style="color:var(--cb)">${nb}</i></b></div>`;
+  const prec = mu.prec.length ? `
+      ${bil(kind === 'G' ? 'Nei gironi' : 'Nelle fasi finali', mu.stessa)}
+      ${bil('In totale', mu.totale)}
+      <div class="du-scores" aria-label="Ultimi scontri, punteggio di ${na} prima">${mu.prec.slice(0, 6).map(p => `<span class="du-sc" style="--c:${esc(pcol(p.win))}"><b>${p.fa}–${p.fb}</b><small>${esc(fmtDate(p.date, {day:'numeric', month:'long'}))}${p.kind === 'KO' ? '<br>' + esc(PH_LABEL[p.phase]) : ''}</small></span>`).join('')}</div>
+      ${mu.serie ? `<div class="du-note">${esc(pname(mu.serie.id))} ha vinto gli ultimi ${mu.serie.n} scontri</div>` : ''}`
+    : `<div class="du-note">Prima sfida tra i due</div>`;
+  const sa = S[a], sb = S[b];
+  const rows = DUEL_STATS.concat([['rating', 'Rating']]).map(([k, label]) => {
+    const va = sa ? sa[k] : null, vb = sb ? sb[k] : null, r = k === 'rating';
+    const f = v => v == null ? '—' : r ? Math.round(v) : pct(v);
+    const w = v => v == null ? 0 : Math.max(0, Math.min(1, r ? v / 100 : v)) * 100;
+    const best = va != null && vb != null && va !== vb ? (va > vb ? 'a' : 'b') : '';
+    return `<div class="du-row"><span class="v ${best === 'a' ? 'best' : ''}" style="--c:var(--ca)">${f(va)}</span><span class="bar l" style="--c:var(--ca)"><i style="width:${w(va)}%"></i></span>
+      <span class="k">${label}</span><span class="bar r" style="--c:var(--cb)"><i style="width:${w(vb)}%"></i></span><span class="v ${best === 'b' ? 'best' : ''}" style="--c:var(--cb)">${f(vb)}</span></div>`;
+  }).join('');
+  const stakes = kind === 'G' ? groupStakes(t, m) : null;
+  const rg = r => r[0] === r[1] ? `${r[0]}°` : `${r[0]}°–${r[1]}°`;
+  const col = (id, side) => {
+    const s = S[id], sw = strongWeak(s);
+    const last = s ? s.seq.slice(-5) : [];
+    const today = t.matches.filter(z => played(z) && (z.a === id || z.b === id));
+    const tw = today.filter(z => winnerOf(z) === id).length, tl = today.length - tw;
+    const st = stakes && stakes[id];
+    return `<div class="du-col" style="--c:var(--c${side})">
+      <div class="du-nm">${esc(pname(id))}</div>
+      <div class="du-l"><span>Forma</span>${last.length ? `<span class="dots" aria-label="Ultime ${last.length} partite: ${last.filter(Boolean).length} vinte">${last.map(v => `<i class="${v ? 'w' : 'l'}"></i>`).join('')}</span>` : 'nessuna partita'}</div>
+      <div class="du-l"><span>Oggi</span>${today.length ? `${tw} ${tw === 1 ? 'vinta' : 'vinte'}, ${tl} ${tl === 1 ? 'persa' : 'perse'}` : 'ancora nessuna partita'}</div>
+      ${sw ? `<div class="du-l"><span>Punto forte</span>${esc(sw.forte.label)} ${pct(sw.forte.v)}</div>
+      <div class="du-l"><span>Punto debole</span>${esc(sw.debole.label)} ${pct(sw.debole.v)}</div>` : `<div class="du-l"><span>Punti forti e deboli</span>servono più partite</div>`}
+      ${st && st.now > 0 ? `<div class="du-l"><span>Posta in gioco</span>ora ${st.now}°, se vince ${rg(st.win)}, se perde ${rg(st.lose)}</div>` : ''}
+    </div>`;
+  };
+  return `<section class="card duel" style="--ca:${esc(pcol(a))};--cb:${esc(pcol(b))}" aria-label="Sfida a confronto">
+    <h2 class="du-title">Sfida a confronto</h2>
+    <div class="du-sec">
+      <div class="du-h">Probabilità di vittoria</div>
+      <div class="du-prob"><b style="color:var(--ca)">${na} ${pa}%</b><b style="color:var(--cb)">${100 - pa}% ${nb}</b></div>
+      <div class="du-pbar"><i style="width:${pa}%"></i></div>
+      <div class="du-note">Risultato più probabile: ${likely}</div>
+    </div>
+    <div class="du-sec"><div class="du-h">Precedenti${mu.prec.length ? ` <span>· punteggio di ${na} prima</span>` : ''}</div>${prec}</div>
+    <div class="du-sec"><div class="du-h">Statistiche a confronto</div>${rows}</div>
+    ${kind === 'KO' && KO_STAKE[m.phase] ? `<div class="du-stake">${KO_STAKE[m.phase]}</div>` : ''}
+    <div class="du-cols">${col(a, 'a')}${col(b, 'b')}</div>
+  </section>`;
+}
+
 function koBlock(t, interactive){
   const ko = t.matches.filter(m => m.phase !== 'G');
   if(!ko.length) return '';
   const order = ['SP','QF','E','SF','F'];
+  // prossima sfida da giocare della fase finale: sotto la sua fase compare "Sfida a confronto"
+  const nextKO = interactive && t.status === 'live' ?order.flatMap(p => ko.filter(m => m.phase === p)).find(m => m.a && m.b && !played(m)) : null;
   return order.filter(p => ko.some(m => m.phase === p)).map(p => {
     const ms = ko.filter(m => m.phase === p);
     return `<div class="ko-round"><h3>${PH_LABEL[p]}</h3><div class="card flush mlist">${ms.map(m => {
@@ -513,7 +630,7 @@ function koBlock(t, interactive){
           ${scorepad(t, m)}
           <button class="link small" data-act="openMatch" data-t="${t.id}" data-m="${m.id}">Cambia blader</button>
         </div>` : matchRow(t, m);
-    }).join('')}</div></div>`;
+    }).join('')}</div></div>${nextKO && nextKO.phase === p ? duelCard(t, nextKO) : ''}`;
   }).join('');
 }
 
@@ -582,7 +699,7 @@ function viewLive(){
       ${!hasKO && store.writable ? `<button class="btn primary block" data-act="koSetup" data-t="${t.id}">Genera fase finale</button>` : ''}</div>`;
   }
   const koWarn = hasKO ? `<p class="note">Il tabellone è già generato. Se modifichi il girone, rigeneralo da Fase finale.</p>` : '';
-  return head + top + koWarn + `<div class="sec-h"><h2>Classifica live</h2><button class="link small" data-act="liveSub" data-v="st">Completa</button></div>
+  return head + top + (nx ? duelCard(t, nx) : '') + koWarn + `<div class="sec-h"><h2>Classifica live</h2><button class="link small" data-act="liveSub" data-v="st">Completa</button></div>
     <div class="card flush">${standingsTable(t, 0)}</div>
     <div class="sec-h"><h2>Tutte le sfide</h2>${store.writable ? '<span class="small muted">tocca per modificare</span>' : ''}</div>
     <div class="card flush mlist">${G.map(m => matchRow(t, m, {here: m === nx})).join('')}</div>`;
