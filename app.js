@@ -1031,10 +1031,32 @@ const TIPO_COL = {attacco:'var(--hot)', difesa:'var(--cool)', resistenza:'var(--
 const STAT_COL = {att:'var(--hot)', dif:'var(--cool)', res:'var(--win)', scatto:'var(--accent)', burst:'#a78bfa'};
 const num1 = v => v == null ? '—' : String(Math.round(v * 10) / 10).replace('.', ',');
 const grammi = v => v == null ? 'peso non disponibile' : num1(v) + ' g';
-const tipoTag = t => t ? `<span class="ttag" style="--c:${TIPO_COL[t]}">${TIPO_LABEL[t]}</span>` : '';
+// nome del Bey che va a capo solo tra lama e sigla, mai dentro "9-60GF"
+const beyNomeHtml = n => n ? n.split(' ').map(x => `<span class="nw">${esc(x)}</span>`).join(' ') : 'Bey incompleto';
+const tipoTag = t => t ?`<span class="ttag" style="--c:${TIPO_COL[t]}">${TIPO_LABEL[t]}</span>` : '';
 const deckMe = () => { const id = lsGet(LS_ME); return id && L.players.some(p => p.id === id) ? id : null; };
 const deckOf = id => D[id] || (D[id] = {beys:[null, null, null]});
 const catCount = () => Object.values(CAT.pezzi).reduce((n, l) => n + l.length, 0);
+
+// immagine di un pezzo: img/pezzi/<tipo>/<id>.webp, generata da scripts/catalogo.py --immagini.
+// img 'p' = solo il pezzo, sfondo trasparente; 'v' = Bey visto dall'alto con lo sfondo tolto (dall'alto si vede
+// solo la lama); 'f' = foto del Bey completo con lo sfondo (riquadro chiaro); niente = sagoma.
+const phImg = k => `<span class="pimg ph ${k === 'bit' ? 'ph-bit' : 'ph-disco'}" aria-hidden="true"></span>`;
+function partImg(k, p){
+  if(!p || !p.img) return phImg(k);
+  return `<img class="pimg${p.img === 'f' ? ' foto' : ''}" src="img/pezzi/${k}/${encodeURIComponent(p.id)}.webp" width="320" height="${Math.round(320 * (p.ar || 1))}" loading="lazy" decoding="async" alt="${esc(p.nome)}">`;
+}
+// il Bey smontato sul tavolo: i pezzi uno sotto l'altro lungo l'asse, nell'ordine di montaggio
+const EX_SIZE = {lama:[180, 180], main:[170, 170], metal:[170, 170], over:[150, 150], assist:[140, 140], chip:[64, 64], ratchet:[120, 110], bit:[90, 110]};
+function explodeView(r){
+  return `<div class="explode">${r.parti.map(([k, , p]) => {
+    const solo = p && p.img && p.img !== 'f';
+    const nota = !p ? 'da scegliere' : p.img === 'f' ? 'la wiki ha solo la foto del Bey completo' : !p.img ? 'immagine non disponibile' : '';
+    return `<div class="ex-row${p ? '' : ' vuoto'}" style="--w:${EX_SIZE[k][0]}px;--h:${EX_SIZE[k][1]}px">
+      <div class="ex-img">${solo ? partImg(k, p) : phImg(k)}</div>
+      <div class="ex-lab"><small>${PARTE[k]}</small><b>${p ? esc(p.nome) : '—'}</b>${nota ? `<span>${nota}</span>` : ''}</div></div>`;
+  }).join('')}</div>`;
+}
 
 // barre delle prestazioni; max = massimi del catalogo per scalare
 function beyStats(v, max, keys = BEY_STATS){
@@ -1047,8 +1069,8 @@ function beyCard(b, i, editable){
     ${editable ? `<button class="btn block" data-act="slot" data-v="${i}">+ Componi il Bey</button>` : '<p class="small muted" style="margin:0">Da comporre</p>'}</section>`;
   const r = assembla(CAT, b);
   return `<section class="card beycard" style="--c:${r.tipo ? TIPO_COL[r.tipo] : 'var(--muted)'}">${head}${tipoTag(r.tipo)}</div>
-    <h3 class="bey-nm">${esc(r.nome || 'Bey incompleto')}</h3>
-    <div class="bey-parts">${r.parti.map(([k, , p]) => `<span${p ? '' : ' class="miss"'}><small>${PARTE[k]}</small>${p ? esc(p.nome) : 'da scegliere'}</span>`).join('')}</div>
+    <h3 class="bey-nm">${beyNomeHtml(r.nome)}</h3>
+    ${explodeView(r)}
     <div class="bey-facts"><span>Peso <b>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</b></span>${r.rot ? `<span>Rotazione <b>${r.rot}</b></span>` : ''}</div>
     ${beyStats(r, catMax(CAT).bey)}
     ${r.note.length ? `<ul class="bey-note">${r.note.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
@@ -1087,8 +1109,9 @@ function deckBlock(id){
   const beys = (D[id] && D[id].beys || []).map((b, i) => [b, i]).filter(([b]) => !beyVuoto(b));
   if(!beys.length) return '';
   return `<div class="sec-h"><h2>Deck</h2>${deckMe() === id ? '<button class="link small" data-act="tab" data-v="deck">Modifica</button>' : ''}</div>
-    <div class="card flush">${beys.map(([b, i]) => { const r = assembla(CAT, b); return `<div class="dk-row" style="--c:${r.tipo ? TIPO_COL[r.tipo] : 'var(--muted)'}">
-      <span class="bey-n">${i + 1}</span><div class="grow"><div class="pn"><b>${esc(r.nome || 'Bey incompleto')}</b>${tipoTag(r.tipo)}</div>
+    <div class="card flush">${beys.map(([b, i]) => { const r = assembla(CAT, b), l = r.parti.find(([k]) => k === 'lama' || k === 'main' || k === 'metal');
+      return `<div class="dk-row" style="--c:${r.tipo ? TIPO_COL[r.tipo] : 'var(--muted)'}">
+      <span class="bey-n">${i + 1}</span><span class="pth">${partImg(l[0], l[2])}</span><div class="grow"><div class="pn"><b>${beyNomeHtml(r.nome)}</b>${tipoTag(r.tipo)}</div>
       <div class="meta"><i>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</i><i>Attacco ${num1(r.att)}</i><i>Difesa ${num1(r.dif)}</i><i>Resistenza ${num1(r.res)}</i></div></div></div>`; }).join('')}</div>`;
 }
 
@@ -1102,17 +1125,17 @@ function deckSheet(){
     const rows = [...BEY_FORME[f], 'ratchet', 'bit'].map(k => {
       if(k === 'ratchet' && integ) return `<div class="pick off"><span class="k">${PARTE[k]}</span><span class="v">Integrato ${integ === 'lama' ? 'nella lama' : 'nel bit'}</span></div>`;
       const p = partOf(CAT, k, b[k]);
-      return `<button class="pick" data-act="pickList" data-k="${k}"><span class="k">${PARTE[k]}</span>
+      return `<button class="pick" data-act="pickList" data-k="${k}"><span class="k">${PARTE[k]}</span><span class="pth">${p ? partImg(k, p) : ''}</span>
         <span class="v">${p ? `${esc(p.nome)}<small>${[p.tipo ? TIPO_LABEL[p.tipo] : '', p.peso != null ? grammi(p.peso) : ''].filter(Boolean).join(' · ')}</small>` : '<i>Scegli…</i>'}</span>
         <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
     }).join('');
     const desc = {intera:'Lama in un solo pezzo (linee Basic e Unique), anche con il ratchet integrato.',
       cx:'Custom Line: lock chip + lama principale + lama di supporto.', expand:'Custom Line Expand: lock chip + lama in metallo + over blade + lama di supporto.'}[f];
-    html = `<div class="eyebrow">Il mio deck</div><h2>Bey ${ed.i + 1}${r.nome ? ` · <span class="nm-c" style="--c:var(--accent)">${esc(r.nome)}</span>` : ''}</h2>
+    html = `<div class="eyebrow">Il mio deck</div><h2>Bey ${ed.i + 1}${r.nome ? ` · <span class="nm-c" style="--c:var(--accent)">${beyNomeHtml(r.nome)}</span>` : ''}</h2>
       <div class="seg">${Object.entries(FORMA_LABEL).map(([k, l]) => `<button aria-pressed="${f === k}" data-act="slotForma" data-v="${k}">${l}</button>`).join('')}</div>
       <p class="small muted" style="margin:-6px 0 0">${desc}</p>
       <div class="picks">${rows}</div>
-      ${beyVuoto(b) ? '' : `<div class="bey-sum"><div class="bey-facts"><span>Peso <b>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</b></span>${r.tipo ? `<span>Tipo <b>${TIPO_LABEL[r.tipo]}</b></span>` : ''}${r.rot ? `<span>Rotazione <b>${r.rot}</b></span>` : ''}</div>
+      ${beyVuoto(b) ? '' : `<div class="bey-sum">${explodeView(r)}<div class="bey-facts"><span>Peso <b>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</b></span>${r.tipo ? `<span>Tipo <b>${TIPO_LABEL[r.tipo]}</b></span>` : ''}${r.rot ? `<span>Rotazione <b>${r.rot}</b></span>` : ''}</div>
         ${beyStats(r, catMax(CAT).bey)}${r.note.length ? `<ul class="bey-note">${r.note.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}</div>`}
       <button class="btn primary" data-act="closeSheet">Fatto</button>`;
   } else if(ed.view === 'list'){
@@ -1128,9 +1151,10 @@ function deckSheet(){
         const why = partBlock(CAT, beys, ed.i, k, p.id), sel = b[k] === p.id;
         const q = [p.nome, p.hasbro, p.sigla].filter(Boolean).join(' ').toLowerCase();
         return `<button class="prow${sel ? ' sel' : ''}${why ? ' off' : ''}" data-act="partInfo" data-v="${esc(p.id)}" data-q="${esc(q)}" data-t="${p.tipo || ''}" style="--c:${p.tipo ? TIPO_COL[p.tipo] : 'var(--soft)'}">
+          <span class="pth">${partImg(k, p)}</span><span class="pbody">
           <span class="pn"><span><b>${esc(p.nome)}</b>${p.sigla ? ` <small>· ${esc(p.sigla)}</small>` : ''}</span>${sel ? '<span class="ttag" style="--c:var(--accent)">Montato</span>' : tipoTag(p.tipo)}</span>
           ${p.hasbro ? `<small>Hasbro: ${esc(p.hasbro)}</small>` : ''}
-          <span class="meta">${stats(p)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}</button>`;
+          <span class="meta">${stats(p)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}</span></button>`;
       }).join('')}</div>
       <p class="small muted" style="margin:0" id="partN"></p>`;
   } else {
@@ -1138,10 +1162,14 @@ function deckSheet(){
     const why = partBlock(CAT, beys, ed.i, k, p.id), sel = b[k] === p.id;
     const keys = k === 'bit' ? BEY_STATS : BEY_STATS.slice(0, 3);
     const regioni = [p.takara ? 'Takara Tomy (Giappone)' : '', p.hasbroOk ? 'Hasbro (Europa e America)' : ''].filter(Boolean).join(' e ');
-    const tiles = [['Peso', grammi(p.peso)], p.codice ? ['Codice prodotto', esc(p.codice)] : null,
+    const tiles = [p.peso != null ? ['Peso', grammi(p.peso)] : ['Peso non disponibile', '—'], p.codice ? ['Codice prodotto', esc(p.codice)] : null,
       k === 'ratchet' && p.punte != null ? ['Punte', p.punte] : null, k === 'ratchet' && p.altezza ? ['Altezza', num1(p.altezza) + ' mm'] : null,
       p.sigla ? ['Sigla', esc(p.sigla)] : null].filter(Boolean);
     html = `<button class="link row back" data-act="deckBack">${ICON.back} Elenco</button>
+      <div class="pd-img${p.img === 'f' ? ' foto' : ''}" style="--c:${p.tipo ? TIPO_COL[p.tipo] : 'var(--muted)'}">${partImg(k, p)}
+        ${p.img === 'f' ? '<p class="small muted">Foto del Bey completo: la wiki non ha l\'immagine del solo pezzo.</p>'
+          : p.img === 'v' ? '<p class="small muted">Il Bey visto dall\'alto, dove si vede la lama: la wiki non ha la foto del solo pezzo.</p>'
+          : !p.img ? '<p class="small muted">La wiki non ha ancora un\'immagine di questo pezzo.</p>' : ''}</div>
       <div><div class="eyebrow">${PARTE[k]}${PARTE_EN[k] ? ' · ' + PARTE_EN[k] : ''}</div><h2>${esc(p.nome)}</h2>
         ${p.hasbro ? `<p class="small muted" style="margin:4px 0 0">Nome Hasbro: <b>${esc(p.hasbro)}</b></p>` : ''}</div>
       <div class="chips">${tipoTag(p.tipo)}${p.rot ? `<span class="ttag">Rotazione ${p.rot}</span>` : ''}${p.integrato ? '<span class="ttag">Ratchet integrato</span>' : ''}${p.metallo ? '<span class="ttag">Con metallo</span>' : ''}
