@@ -18,7 +18,8 @@ const FORMATS = {
 /* ================= STATO ================= */
 let L = {players:[], settings:{weights:{...DEF_W}}};
 let T = {};
-let ui = {tab:'live', liveSub:null, scope:'all', blader:null, openAnim:null, tour:null, full:false};
+let D = {};   // deck personali: {idBlader: {beys:[bey|null ×3], at}}
+let ui = {tab:'live', liveSub:null, scope:'all', blader:null, openAnim:null, tour:null, full:false, deckEdit:null};
 const store = {writable:true, status:'Caricamento…', level:'', loaded:false, net:true, codeBad:false, flushing:false};
 
 /* ================= UTIL ================= */
@@ -51,6 +52,7 @@ const ICON = {
   rank:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg>',
   blader:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 6 4.8"/></svg>',
   hist:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
+  deck:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><ellipse cx="12" cy="8" rx="9" ry="4"/><path d="M3 8v2.5c0 2.2 4 4 9 4s9-1.8 9-4V8"/><path d="M9.5 14.3 12 21l2.5-6.7"/></svg>',
   more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   trophy:'<svg class="trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
   back:'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M15 18l-6-6 6-6"/></svg>'
@@ -177,6 +179,116 @@ function groupStakes(t, m){
 }
 const KO_STAKE = {SP:'Chi vince entra nella fase finale', QF:'Chi vince va in semifinale', E:'Chi vince va in semifinale', SF:'Chi vince va in finale', F:'Chi vince è campione'};
 
+/* ---- deck: catalogo Beyblade X (site/parts.js, generato da scripts/catalogo.py) e Bey assemblati ----
+   Un Bey è: lama intera + ratchet + bit (linee Basic e Unique), oppure lama componibile Custom Line
+   (lock chip + lama principale + lama di supporto) o Custom Line Expand (lock chip + lama in metallo +
+   over blade + lama di supporto), più ratchet e bit. Con una lama o un bit a ratchet integrato il ratchet
+   non c'è. Il catalogo si passa sempre come parametro (cat): qui niente window. */
+const PARTE = {lama:'Lama', chip:'Lock chip', main:'Lama principale', metal:'Lama in metallo', over:'Over blade', assist:'Lama di supporto', ratchet:'Ratchet', bit:'Bit'};
+const PARTE_EN = {chip:'Lock Chip', main:'Main Blade', metal:'Metal Blade', over:'Over Blade', assist:'Assist Blade'};
+const BEY_FORME = {intera:['lama'], cx:['chip', 'main', 'assist'], expand:['chip', 'metal', 'over', 'assist']};
+const FORMA_LABEL = {intera:'Lama intera', cx:'Componibile', expand:'Componibile Expand'};
+const TIPO_LABEL = {attacco:'Attacco', difesa:'Difesa', resistenza:'Resistenza', bilanciato:'Bilanciato'};
+const BEY_STATS = [['att', 'Attacco'], ['dif', 'Difesa'], ['res', 'Resistenza'], ['scatto', 'Scatto'], ['burst', 'Resistenza al burst']];
+
+function catIdx(cat){
+  if(!cat._i){ cat._i = {}; for(const [k, l] of Object.entries(cat.pezzi || {})) cat._i[k] = Object.fromEntries(l.map(p => [p.id, p])); }
+  return cat._i;
+}
+const partOf = (cat, k, id) => id ? (catIdx(cat)[k] || {})[id] || null : null;
+const beyForma = b => b && BEY_FORME[b.forma] ? b.forma : 'intera';
+// identità della lama per la regola "lame tutte diverse" (la stessa usata da bey_salva_deck)
+const beyLama = b => b ? b.lama || b.main || b.metal || null : null;
+const beyVuoto = b => !b || ![...BEY_FORME[beyForma(b)], 'ratchet', 'bit'].some(k => b[k]);
+function beyIntegrato(cat, b){
+  const l = beyForma(b) === 'intera' && partOf(cat, 'lama', b.lama), t = partOf(cat, 'bit', b.bit);
+  return l && l.integrato ? 'lama' : t && t.integrato ? 'bit' : null;
+}
+// [[tipo di pezzo, id, pezzo del catalogo | null]] nell'ordine di montaggio
+function beyParti(cat, b){
+  const out = BEY_FORME[beyForma(b)].map(k => [k, b[k] || null, partOf(cat, k, b[k])]);
+  if(!beyIntegrato(cat, b)) out.push(['ratchet', b.ratchet || null, partOf(cat, 'ratchet', b.ratchet)]);
+  out.push(['bit', b.bit || null, partOf(cat, 'bit', b.bit)]);
+  return out;
+}
+// nome alla giapponese: DranSword 3-60F, DranBrave S6-60V, UnicornDelta PO3-60GU, PegasusBlast ATr
+function beyNome(cat, b){
+  const P = k => partOf(cat, k, b[k]), f = beyForma(b), ini = p => p ? p.nome[0].toUpperCase() : '';
+  const testa = (f === 'intera' ? [P('lama')] : [P('chip'), P(f === 'cx' ? 'main' : 'metal')]).filter(Boolean).map(p => p.nome).join('');
+  const r = !beyIntegrato(cat, b) && P('ratchet'), t = P('bit');
+  const coda = (f === 'cx' ? ini(P('assist')) : f === 'expand' ? ini(P('over')) + ini(P('assist')) : '') + (r ? r.nome : '') + (t ? t.sigla || t.nome : '');
+  return (testa + ' ' + coda).trim();
+}
+// massimi del catalogo, per scalare le barre (per tipo di pezzo e per Bey intero)
+function catMax(cat){
+  if(cat._m) return cat._m;
+  const mx = (k, s) => Math.max(0, ...(cat.pezzi[k] || []).map(p => p[s] || 0));
+  const m = {kind:{}, bey:{}};
+  for(const k of Object.keys(PARTE)) m.kind[k] = Object.fromEntries(BEY_STATS.map(([s]) => [s, mx(k, s)]));
+  for(const [s] of BEY_STATS.slice(0, 3)){
+    const lama = Math.max(mx('lama', s), mx('main', s) + mx('assist', s), mx('metal', s) + mx('over', s) + mx('assist', s));
+    m.bey[s] = lama + mx('ratchet', s) + mx('bit', s);
+  }
+  m.bey.scatto = m.kind.bit.scatto; m.bey.burst = m.kind.bit.burst;
+  return cat._m = m;
+}
+// Bey assemblato: attacco, difesa e resistenza sono la somma dei valori dei pezzi; scatto e resistenza
+// al burst quelli del bit; il peso è la somma dei pesi. Tipo = il valore più alto, "bilanciato" se i primi
+// due distano meno del 10%.
+function assembla(cat, b){
+  const parti = beyParti(cat, b);
+  const dati = parti.filter(x => x[2]).map(x => [x[0], x[2]]);
+  const sum = s => dati.reduce((t, [, p]) => t + (p[s] || 0), 0);
+  const bit = partOf(cat, 'bit', b.bit);
+  const r = {parti, nome:beyNome(cat, b), forma:beyForma(b), integrato:beyIntegrato(cat, b),
+    mancanti: parti.filter(x => !x[2]).map(x => x[0]),
+    peso: Math.round(sum('peso') * 10) / 10, att:sum('att'), dif:sum('dif'), res:sum('res'),
+    scatto: bit && bit.scatto != null ? bit.scatto : null, burst: bit && bit.burst != null ? bit.burst : null,
+    senzaPeso: dati.filter(([, p]) => p.peso == null).map(([, p]) => p.nome),
+    senzaValori: dati.filter(([k, p]) => k !== 'chip' && (p.att == null || p.dif == null || p.res == null)).map(([, p]) => p.nome),
+    nonAmmessi: dati.filter(([, p]) => p.wbo === false).map(([, p]) => p.nome)};
+  r.completo = !r.mancanti.length;
+  const top = [['attacco', r.att], ['difesa', r.dif], ['resistenza', r.res]].sort((x, y) => y[1] - x[1]);
+  r.tipo = !top[0][1] ? null : (top[0][1] - top[1][1]) / top[0][1] < 0.1 ? 'bilanciato' : top[0][0];
+  const conRot = dati.find(([k, p]) => p.rot && k !== 'ratchet' && k !== 'bit');
+  r.rot = conRot ? conRot[1].rot : null;
+  const lamaP = dati.find(([k]) => k === 'lama' || k === 'main' || k === 'metal');
+  r.note = [];
+  if(r.integrato) r.note.push(r.integrato === 'lama' ? 'Il ratchet è integrato nella lama.' : 'Il ratchet è integrato nel bit.');
+  if(lamaP && bit && lamaP[1].tipo && bit.tipo && lamaP[1].tipo !== bit.tipo && lamaP[1].tipo !== 'bilanciato' && bit.tipo !== 'bilanciato')
+    r.note.push(`Lama da ${TIPO_LABEL[lamaP[1].tipo].toLowerCase()} con bit da ${TIPO_LABEL[bit.tipo].toLowerCase()}: combinazione mista.`);
+  if(r.nonAmmessi.length) r.note.push(`Non ammesso nei tornei WBO per: ${r.nonAmmessi.join(', ')}.`);
+  if(r.senzaPeso.length) r.note.push(`Peso incompleto: la wiki non riporta ancora il peso di ${r.senzaPeso.join(', ')}.`);
+  if(r.senzaValori.length) r.note.push(`Valori incompleti: la wiki non riporta ancora quelli di ${r.senzaValori.join(', ')}.`);
+  return r;
+}
+// motivo per cui un pezzo non si può montare nel Bey i del deck (null = si può)
+function partBlock(cat, beys, i, k, id){
+  const b = beys[i] || {}, p = partOf(cat, k, id);
+  if(!p) return 'Pezzo non presente nel catalogo';
+  if(k === 'lama' || k === 'main' || k === 'metal'){
+    const j = beys.findIndex((x, n) => n !== i && x && beyLama(x) === id);
+    if(j >= 0) return `Già usata nel Bey ${j + 1}: le lame del deck devono essere tutte diverse`;
+  }
+  if(k === 'bit' && p.integrato && beyIntegrato(cat, {...b, bit:null}) === 'lama') return 'La lama ha già il ratchet integrato';
+  if(k === 'lama' && p.integrato && partOf(cat, 'bit', b.bit) && partOf(cat, 'bit', b.bit).integrato) return 'Il bit ha già il ratchet integrato';
+  return null;
+}
+// errori del deck intero (stesse regole del server, più la compatibilità dei ratchet integrati)
+function deckErrori(cat, beys){
+  const err = [], list = beys || [];
+  if(list.filter(b => !beyVuoto(b)).length > 3) err.push('Al massimo 3 Bey');
+  const seen = {};
+  list.forEach((b, i) => {
+    const id = beyLama(b); if(!id) return;
+    if(seen[id] != null) err.push(`Bey ${i + 1}: la lama ${(partOf(cat, 'lama', id) || partOf(cat, 'main', id) || partOf(cat, 'metal', id) || {nome:id}).nome} è già nel Bey ${seen[id] + 1}`);
+    else seen[id] = i;
+    const l = beyForma(b) === 'intera' && partOf(cat, 'lama', b.lama), t = partOf(cat, 'bit', b.bit);
+    if(l && l.integrato && t && t.integrato) err.push(`Bey ${i + 1}: lama e bit hanno entrambi il ratchet integrato`);
+  });
+  return err;
+}
+
 /* ================= TORNEO: LOGICA ================= */
 function roundRobin(ids){
   const p = [...ids]; if(p.length % 2) p.push(null);
@@ -256,8 +368,9 @@ function mergeTour(loc, rem){
    e partono verso Supabase appena c'è rete. Ogni 15 s si scaricano le novità degli altri. */
 const CFG = window.BEY_CONFIG || {};
 const CLOUD = !!(CFG.url && CFG.key);
-const LS_KEY = 'beyblade-arena.v2', LS_CODE = 'beyblade-arena.codice';
-let sync = {ver:{L:null, t:{}}, out:{}, last:null, seq:0};
+const CAT = window.BEY_PARTS && window.BEY_PARTS.pezzi ? window.BEY_PARTS : {pezzi:{}};
+const LS_KEY = 'beyblade-arena.v2', LS_CODE = 'beyblade-arena.codice', LS_ME = 'beyblade-arena.io';
+let sync = {ver:{L:null, t:{}, k:{}}, out:{}, last:null, seq:0};
 let code = null;
 let pendingRender = false;
 
@@ -266,7 +379,7 @@ function normLeague(d){
     ...p, color: p.color || PALETTE[i % PALETTE.length], bey: BEY_IDS.includes(p.bey) ? p.bey : BEY_IDS[i % BEY_IDS.length]}));
   return {players, settings: d && d.settings && d.settings.weights ? d.settings : {weights:{...DEF_W}}};
 }
-function lsSave(){ try{ localStorage.setItem(LS_KEY, JSON.stringify({L, T, sync, at:Date.now()})); }catch(e){} }
+function lsSave(){ try{ localStorage.setItem(LS_KEY, JSON.stringify({L, T, D, sync, at:Date.now()})); }catch(e){} }
 function lsLoad(){ try{ return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(e){ return null; } }
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k, v){ try{ v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); }catch(e){} }
@@ -292,6 +405,8 @@ function mark(key){
 function saveTour(t){ T[t.id] = t; delete sync.out['d:' + t.id]; mark('t:' + t.id); }
 function saveLeague(){ mark('L'); }
 async function removeTour(id){ delete T[id]; delete sync.out['t:' + id]; mark('d:' + id); }
+// deck: si invia senza codice gruppo (chiave 'k:<blader>'); vince l'ultima scrittura
+function saveDeck(id){ D[id].at = Date.now(); mark('k:' + id); }
 
 async function sbFetch(path, opts = {}){
   const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 12000);
@@ -310,13 +425,25 @@ let flushTimer = null;
 function scheduleFlush(){ clearTimeout(flushTimer); flushTimer = setTimeout(flush, 250); }
 
 async function flush(){
-  if(!CLOUD || store.flushing || !code || !nPending()) return;
+  if(!CLOUD || store.flushing || !nPending()) return;
+  if(!code && !Object.keys(sync.out).some(k => k.startsWith('k:'))) return;
   store.flushing = true; refreshStatus();
   let changed = false;
   try {
     for(const key of Object.keys(sync.out)){
       const rev = sync.out[key]; if(rev == null) continue;
       let res = null;
+      if(key.startsWith('k:')){
+        const id = key.slice(2);
+        if(!D[id]){ delete sync.out[key]; continue; }
+        // errore HTTP (es. tabella deck non ancora creata su Supabase): resta in coda, ma la rete c'è
+        try { res = await rpc('bey_salva_deck', {p_blader:id, p_data:D[id]}); }
+        catch(e){ if(e.status) continue; throw e; }
+        if(res && res.ok) sync.ver.k[id] = res.updated_at;
+        if(res && res.ok && sync.out[key] === rev) delete sync.out[key];
+        continue;
+      }
+      if(!code) continue;
       if(key === 'L'){
         res = await rpc('bey_salva_lega', {p_codice:code, p_data:L});
         if(res && res.ok) sync.ver.L = res.updated_at;
@@ -355,10 +482,12 @@ async function pull(){
   const f = since ? '&updated_at=gt.' + encodeURIComponent(since) : '';
   const same = (a, b) => a && b && Date.parse(a) === Date.parse(b);
   try {
-    const [lg, tt, del] = await Promise.all([
+    const [lg, tt, del, dk] = await Promise.all([
       sbFetch('/rest/v1/bey_lega?select=data,updated_at&id=eq.main' + f),
       sbFetch('/rest/v1/bey_tornei?select=id,data,updated_at' + f),
-      sbFetch('/rest/v1/bey_eliminati?select=id,updated_at' + f)]);
+      sbFetch('/rest/v1/bey_eliminati?select=id,updated_at' + f),
+      // la tabella dei deck può mancare se schema.sql non è stato rieseguito: non blocca il resto
+      sbFetch('/rest/v1/bey_deck?select=blader,data,updated_at' + f).catch(e => { if(e.status) return []; throw e; })]);
     let changed = false, max = sync.last;
     const bump = ts => { if(!max || Date.parse(ts) > Date.parse(max)) max = ts; };
     for(const r of lg){
@@ -378,6 +507,12 @@ async function pull(){
     for(const r of del){
       bump(r.updated_at);
       if(T[r.id] && !sync.out['t:' + r.id]){ delete T[r.id]; delete sync.ver.t[r.id]; changed = true; }
+    }
+    for(const r of dk){
+      bump(r.updated_at);
+      if(same(r.updated_at, sync.ver.k[r.blader])) continue;
+      sync.ver.k[r.blader] = r.updated_at;
+      if(!sync.out['k:' + r.blader] && r.data && Array.isArray(r.data.beys)){ D[r.blader] = r.data; changed = true; }
     }
     sync.last = max;
     const first = !store.loaded;
@@ -422,7 +557,8 @@ function safeRender(){
 
 function initStore(){
   const cache = lsLoad();
-  if(cache){ L = normLeague(cache.L); T = cache.T || {}; if(cache.sync) sync = {ver:{L:null, t:{}}, out:{}, last:null, seq:0, ...cache.sync}; }
+  if(cache){ L = normLeague(cache.L); T = cache.T || {}; D = cache.D || {}; if(cache.sync) sync = {ver:{L:null, t:{}, k:{}}, out:{}, last:null, seq:0, ...cache.sync}; }
+  sync.ver.k = sync.ver.k || {};
   code = lsGet(LS_CODE);
   store.writable = !CLOUD || !!code;
   store.loaded = !CLOUD || !!cache;
@@ -798,6 +934,7 @@ function bladerDetail(s, pos){
       <div class="tile"><b>${s.PF}</b><span>Punti fatti</span></div>
       <div class="tile"><b>${s.PF - s.PA > 0 ? '+' : ''}${s.PF - s.PA}</b><span>Differenza</span></div>
     </div>
+    ${deckBlock(s.id)}
     <div class="card stack">
       ${metric('Win Rate', 'Quanto vinci?', pct(s.wr, 1), s.wr)}
       ${metric('Pericolosità', 'Quanto devo avere paura di te?', dec(s.per, 3), s.per)}
@@ -889,12 +1026,165 @@ function viewMore(){
     ${legend()}`;
 }
 
+/* ---- deck personale ---- */
+const TIPO_COL = {attacco:'var(--hot)', difesa:'var(--cool)', resistenza:'var(--win)', bilanciato:'var(--accent)'};
+const STAT_COL = {att:'var(--hot)', dif:'var(--cool)', res:'var(--win)', scatto:'var(--accent)', burst:'#a78bfa'};
+const num1 = v => v == null ? '—' : String(Math.round(v * 10) / 10).replace('.', ',');
+const grammi = v => v == null ? 'peso non disponibile' : num1(v) + ' g';
+const tipoTag = t => t ? `<span class="ttag" style="--c:${TIPO_COL[t]}">${TIPO_LABEL[t]}</span>` : '';
+const deckMe = () => { const id = lsGet(LS_ME); return id && L.players.some(p => p.id === id) ? id : null; };
+const deckOf = id => D[id] || (D[id] = {beys:[null, null, null]});
+const catCount = () => Object.values(CAT.pezzi).reduce((n, l) => n + l.length, 0);
+
+// barre delle prestazioni; max = massimi del catalogo per scalare
+function beyStats(v, max, keys = BEY_STATS){
+  return `<div class="bstats">${keys.map(([s, lab]) => `<div class="bstat" style="--c:${STAT_COL[s]}"><span class="k">${lab}</span>
+    <span class="bar"><i style="width:${v[s] == null || !max[s] ? 0 : Math.min(100, v[s] / max[s] * 100)}%"></i></span><b class="num">${num1(v[s])}</b></div>`).join('')}</div>`;
+}
+function beyCard(b, i, editable){
+  const head = `<div class="bey-h"><span class="bey-n">Bey ${i + 1}</span>`;
+  if(beyVuoto(b)) return `<section class="card beycard vuoto">${head}</div>
+    ${editable ? `<button class="btn block" data-act="slot" data-v="${i}">+ Componi il Bey</button>` : '<p class="small muted" style="margin:0">Da comporre</p>'}</section>`;
+  const r = assembla(CAT, b);
+  return `<section class="card beycard" style="--c:${r.tipo ? TIPO_COL[r.tipo] : 'var(--muted)'}">${head}${tipoTag(r.tipo)}</div>
+    <h3 class="bey-nm">${esc(r.nome || 'Bey incompleto')}</h3>
+    <div class="bey-parts">${r.parti.map(([k, , p]) => `<span${p ? '' : ' class="miss"'}><small>${PARTE[k]}</small>${p ? esc(p.nome) : 'da scegliere'}</span>`).join('')}</div>
+    <div class="bey-facts"><span>Peso <b>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</b></span>${r.rot ? `<span>Rotazione <b>${r.rot}</b></span>` : ''}</div>
+    ${beyStats(r, catMax(CAT).bey)}
+    ${r.note.length ? `<ul class="bey-note">${r.note.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    ${editable ? `<div class="row"><button class="btn grow" data-act="slot" data-v="${i}">Modifica</button><button class="btn ghost" data-act="slotClear" data-v="${i}">Svuota</button></div>` : ''}
+  </section>`;
+}
+function deckLegend(){
+  return `<details class="card legend"><summary>Come si calcolano le prestazioni</summary><dl>
+    <dt>Attacco, difesa e resistenza</dt><dd>Somma dei valori ufficiali dei singoli pezzi (lama, ratchet, bit e, per le lame componibili, ogni loro parte). Le barre sono in proporzione al Bey più forte che si può comporre con il catalogo.</dd>
+    <dt>Scatto e resistenza al burst</dt><dd>Sono quelli del bit: lo scatto conta per l'Xtreme Dash sul binario dello stadio, la resistenza al burst per non farsi smontare.</dd>
+    <dt>Peso</dt><dd>Somma dei pesi dei pezzi, misurati dalla community: possono variare di qualche decimo di grammo da un esemplare all'altro.</dd>
+    <dt>Tipo</dt><dd>La caratteristica più alta tra attacco, difesa e resistenza; "bilanciato" se le prime due sono quasi pari (meno del 10% di differenza).</dd>
+    <dt>Attenzione</dt><dd>Non esiste una formula ufficiale per prevedere come gira un Bey: questi numeri aiutano a confrontare le combinazioni, poi decide lo stadio.</dd>
+  </dl></details>`;
+}
+function viewDeck(){
+  if(!catCount()) return `<div class="card muted">Catalogo dei pezzi non disponibile: ricarica l'app con la rete attiva.</div>`;
+  if(!L.players.length) return `<div class="card muted">Aggiungi prima i blader in Altro.</div>`;
+  const me = deckMe();
+  if(!me) return `<div class="sec-h"><h2>Il mio deck</h2></div>
+    <div class="card stack"><p style="margin:0"><b>Chi sei?</b> Scegli il tuo nome per comporre il tuo deck: fino a 3 Bey, con lame tutte diverse.</p>
+      <div class="chips">${L.players.map(p => `<button class="chip" data-act="deckMe" data-v="${esc(p.id)}">${av(p.id, 'sm')}${esc(p.name)}</button>`).join('')}</div>
+      <p class="small muted" style="margin:0">Non serve password: il nome resta salvato su questo telefono. I deck si vedono anche nella scheda di ogni blader.</p></div>
+    ${deckLegend()}`;
+  const dk = D[me], beys = dk ? dk.beys : [], err = deckErrori(CAT, beys);
+  const fonte = CAT.letto ? ` Dati della Beyblade Wiki letti il ${esc(fmtDate(CAT.letto))}.` : '';
+  return `<div class="deck-head" style="--c:${esc(pcol(me))}">${av(me, 'lg spin')}<div class="grow"><div class="eyebrow">Il mio deck</div><h1>${esc(pname(me))}</h1>
+      <button class="link small" data-act="deckWho">Non sei ${esc(pname(me))}? Cambia</button></div></div>
+    ${err.length ? `<p class="note">${err.map(esc).join('<br>')}</p>` : ''}
+    ${[0, 1, 2].map(i => beyCard(beys[i], i, true)).join('')}
+    ${deckLegend()}
+    <p class="small muted" style="margin:0">Catalogo: ${catCount()} pezzi Beyblade X, Takara Tomy e Hasbro.${fonte}</p>`;
+}
+// deck in sola lettura nella scheda del blader
+function deckBlock(id){
+  const beys = (D[id] && D[id].beys || []).map((b, i) => [b, i]).filter(([b]) => !beyVuoto(b));
+  if(!beys.length) return '';
+  return `<div class="sec-h"><h2>Deck</h2>${deckMe() === id ? '<button class="link small" data-act="tab" data-v="deck">Modifica</button>' : ''}</div>
+    <div class="card flush">${beys.map(([b, i]) => { const r = assembla(CAT, b); return `<div class="dk-row" style="--c:${r.tipo ? TIPO_COL[r.tipo] : 'var(--muted)'}">
+      <span class="bey-n">${i + 1}</span><div class="grow"><div class="pn"><b>${esc(r.nome || 'Bey incompleto')}</b>${tipoTag(r.tipo)}</div>
+      <div class="meta"><i>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</i><i>Attacco ${num1(r.att)}</i><i>Difesa ${num1(r.dif)}</i><i>Resistenza ${num1(r.res)}</i></div></div></div>`; }).join('')}</div>`;
+}
+
+// foglio di composizione: ui.deckEdit = {i, view:'slot'|'list'|'part', k, id, q, f, scroll}
+function deckSheet(){
+  const ed = ui.deckEdit, me = deckMe(); if(!ed || !me) return closeSheet();
+  const beys = deckOf(me).beys, b = beys[ed.i] || {forma:'intera'}, f = beyForma(b);
+  let html;
+  if(ed.view === 'slot'){
+    const r = assembla(CAT, b), integ = r.integrato;
+    const rows = [...BEY_FORME[f], 'ratchet', 'bit'].map(k => {
+      if(k === 'ratchet' && integ) return `<div class="pick off"><span class="k">${PARTE[k]}</span><span class="v">Integrato ${integ === 'lama' ? 'nella lama' : 'nel bit'}</span></div>`;
+      const p = partOf(CAT, k, b[k]);
+      return `<button class="pick" data-act="pickList" data-k="${k}"><span class="k">${PARTE[k]}</span>
+        <span class="v">${p ? `${esc(p.nome)}<small>${[p.tipo ? TIPO_LABEL[p.tipo] : '', p.peso != null ? grammi(p.peso) : ''].filter(Boolean).join(' · ')}</small>` : '<i>Scegli…</i>'}</span>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+    }).join('');
+    const desc = {intera:'Lama in un solo pezzo (linee Basic e Unique), anche con il ratchet integrato.',
+      cx:'Custom Line: lock chip + lama principale + lama di supporto.', expand:'Custom Line Expand: lock chip + lama in metallo + over blade + lama di supporto.'}[f];
+    html = `<div class="eyebrow">Il mio deck</div><h2>Bey ${ed.i + 1}${r.nome ? ` · <span class="nm-c" style="--c:var(--accent)">${esc(r.nome)}</span>` : ''}</h2>
+      <div class="seg">${Object.entries(FORMA_LABEL).map(([k, l]) => `<button aria-pressed="${f === k}" data-act="slotForma" data-v="${k}">${l}</button>`).join('')}</div>
+      <p class="small muted" style="margin:-6px 0 0">${desc}</p>
+      <div class="picks">${rows}</div>
+      ${beyVuoto(b) ? '' : `<div class="bey-sum"><div class="bey-facts"><span>Peso <b>${r.senzaPeso.length ? 'almeno ' : ''}${grammi(r.peso)}</b></span>${r.tipo ? `<span>Tipo <b>${TIPO_LABEL[r.tipo]}</b></span>` : ''}${r.rot ? `<span>Rotazione <b>${r.rot}</b></span>` : ''}</div>
+        ${beyStats(r, catMax(CAT).bey)}${r.note.length ? `<ul class="bey-note">${r.note.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}</div>`}
+      <button class="btn primary" data-act="closeSheet">Fatto</button>`;
+  } else if(ed.view === 'list'){
+    const k = ed.k, list = CAT.pezzi[k] || [], hasTipo = list.some(p => p.tipo);
+    const stats = p => (k === 'chip' ? [] : [['att', 'Attacco'], ['dif', 'Difesa'], ['res', 'Resistenza']].filter(([s]) => p[s] != null).map(([s, l]) => `${l} ${num1(p[s])}`))
+      .concat(k === 'bit' && p.scatto != null ? [`Scatto ${num1(p.scatto)}`] : [], k === 'bit' && p.burst != null ? [`Resistenza al burst ${num1(p.burst)}`] : [],
+        k === 'ratchet' && p.altezza ? [`altezza ${num1(p.altezza)} mm`] : [], p.peso != null ? [grammi(p.peso)] : []).map(x => `<i>${x}</i>`).join('');
+    html = `<button class="link row back" data-act="deckBack">${ICON.back} Bey ${ed.i + 1}</button>
+      <h2>${PARTE[k]}</h2>
+      <input type="search" id="partQ" placeholder="Cerca per nome, anche quello Hasbro" value="${esc(ed.q || '')}" aria-label="Cerca" autocomplete="off">
+      ${hasTipo ? `<div class="chips scroll">${[['', 'Tutti'], ...Object.entries(TIPO_LABEL)].map(([v, l]) => `<button class="chip txt" aria-pressed="${(ed.f || '') === v}" data-act="partFilter" data-v="${v}">${l}</button>`).join('')}</div>` : ''}
+      <div class="plist">${list.map(p => {
+        const why = partBlock(CAT, beys, ed.i, k, p.id), sel = b[k] === p.id;
+        const q = [p.nome, p.hasbro, p.sigla].filter(Boolean).join(' ').toLowerCase();
+        return `<button class="prow${sel ? ' sel' : ''}${why ? ' off' : ''}" data-act="partInfo" data-v="${esc(p.id)}" data-q="${esc(q)}" data-t="${p.tipo || ''}" style="--c:${p.tipo ? TIPO_COL[p.tipo] : 'var(--soft)'}">
+          <span class="pn"><span><b>${esc(p.nome)}</b>${p.sigla ? ` <small>· ${esc(p.sigla)}</small>` : ''}</span>${sel ? '<span class="ttag" style="--c:var(--accent)">Montato</span>' : tipoTag(p.tipo)}</span>
+          ${p.hasbro ? `<small>Hasbro: ${esc(p.hasbro)}</small>` : ''}
+          <span class="meta">${stats(p)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}</button>`;
+      }).join('')}</div>
+      <p class="small muted" style="margin:0" id="partN"></p>`;
+  } else {
+    const k = ed.k, p = partOf(CAT, k, ed.id); if(!p){ ed.view = 'list'; return deckSheet(); }
+    const why = partBlock(CAT, beys, ed.i, k, p.id), sel = b[k] === p.id;
+    const keys = k === 'bit' ? BEY_STATS : BEY_STATS.slice(0, 3);
+    const regioni = [p.takara ? 'Takara Tomy (Giappone)' : '', p.hasbroOk ? 'Hasbro (Europa e America)' : ''].filter(Boolean).join(' e ');
+    const tiles = [['Peso', grammi(p.peso)], p.codice ? ['Codice prodotto', esc(p.codice)] : null,
+      k === 'ratchet' && p.punte != null ? ['Punte', p.punte] : null, k === 'ratchet' && p.altezza ? ['Altezza', num1(p.altezza) + ' mm'] : null,
+      p.sigla ? ['Sigla', esc(p.sigla)] : null].filter(Boolean);
+    html = `<button class="link row back" data-act="deckBack">${ICON.back} Elenco</button>
+      <div><div class="eyebrow">${PARTE[k]}${PARTE_EN[k] ? ' · ' + PARTE_EN[k] : ''}</div><h2>${esc(p.nome)}</h2>
+        ${p.hasbro ? `<p class="small muted" style="margin:4px 0 0">Nome Hasbro: <b>${esc(p.hasbro)}</b></p>` : ''}</div>
+      <div class="chips">${tipoTag(p.tipo)}${p.rot ? `<span class="ttag">Rotazione ${p.rot}</span>` : ''}${p.integrato ? '<span class="ttag">Ratchet integrato</span>' : ''}${p.metallo ? '<span class="ttag">Con metallo</span>' : ''}
+        ${p.wbo === false ? '<span class="ttag" style="--c:var(--loss)">Non ammesso nei tornei WBO</span>' : p.wbo ? '<span class="ttag" style="--c:var(--win)">Ammesso nei tornei WBO</span>' : ''}</div>
+      <div class="tiles">${tiles.map(([l, v]) => `<div class="tile"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
+      ${k === 'chip' && p.att == null ? '<p class="small muted" style="margin:0">Per i lock chip non ci sono valori di attacco, difesa e resistenza.</p>' : beyStats(p, catMax(CAT).kind[k], keys)}
+      ${p.varianti ? `<ul class="bey-note">${p.varianti.map(v => `<li>${esc(v)}</li>`).join('')}</ul>` : ''}
+      <p class="small muted" style="margin:0">${regioni ? 'Venduto da ' + regioni + '. ' : ''}Fonte: <a href="${esc((CAT.wiki || '') + p.w)}" target="_blank" rel="noopener">scheda sulla Beyblade Wiki</a>.</p>
+      ${why ? `<p class="note">${esc(why)}</p>` : ''}
+      ${sel ? `<button class="btn" data-act="partRemove">Togli dal Bey</button>` : `<button class="btn primary" data-act="partUse" ${why ? 'disabled' : ''}>Usa questo</button>`}`;
+  }
+  openSheet(html);
+  const card = $('#sheetCard'); card.scrollTop = ed.view === 'list' ? ed.scroll || 0 : 0;
+  if(ed.view === 'list') partFilter();
+}
+// filtro dell'elenco senza ridisegnare (ricerca + tipo)
+function partFilter(){
+  const ed = ui.deckEdit; if(!ed) return;
+  const q = (ed.q || '').trim().toLowerCase(); let n = 0;
+  document.querySelectorAll('.plist .prow').forEach(el => {
+    const ok = (!q || el.dataset.q.includes(q)) && (!ed.f || el.dataset.t === ed.f);
+    el.hidden = !ok; if(ok) n++;
+  });
+  const out = $('#partN'); if(out) out.textContent = n ? `${n} ${n === 1 ? 'pezzo' : 'pezzi'}` : 'Nessun pezzo trovato';
+}
+// modifica il Bey i del mio deck e salva
+function editBey(fn){
+  const me = deckMe(), ed = ui.deckEdit; if(!me || !ed) return;
+  const dk = deckOf(me);
+  while(dk.beys.length < 3) dk.beys.push(null);
+  const b = dk.beys[ed.i] || {forma:'intera'};
+  fn(b);
+  if(beyIntegrato(CAT, b)) delete b.ratchet;
+  dk.beys[ed.i] = beyVuoto(b) && b.forma === 'intera' ? null : b;
+  saveDeck(me); pendingRender = true;
+}
+
 /* ================= RENDER ================= */
 function render(){
   pendingRender = false;
-  const tabs = [['live','Torneo'],['rank','Classifica'],['blader','Blader'],['hist','Storico'],['more','Altro']];
+  const tabs = [['live','Torneo'],['rank','Classifica'],['blader','Blader'],['deck','Deck'],['hist','Storico'],['more','Altro']];
   $('#tabs').innerHTML = tabs.map(([k, l]) => `<button data-act="tab" data-v="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ICON[k]}${l}</button>`).join('');
-  const v = {live:viewLive, rank:viewRank, blader:viewBlader, hist:viewHist, more:viewMore}[ui.tab];
+  const v = {live:viewLive, rank:viewRank, blader:viewBlader, deck:viewDeck, hist:viewHist, more:viewMore}[ui.tab] || viewLive;
   $('#view').innerHTML = v();
   ui.flash = null;
   refreshStatus();
@@ -1048,6 +1338,36 @@ const ACT = {
       render(); toast('Modifica sbloccata su questo telefono'); flush();
     } else toast('Codice sbagliato');
   },
+  // deck personale
+  deckMe: el => { lsSet(LS_ME, el.dataset.v); render(); window.scrollTo(0, 0); },
+  deckWho: () => { lsSet(LS_ME, null); render(); window.scrollTo(0, 0); },
+  slot: el => { if(!deckMe()) return; ui.deckEdit = {i:+el.dataset.v, view:'slot'}; deckSheet(); },
+  slotForma: el => {
+    const v = el.dataset.v;
+    editBey(b => { if(beyForma(b) === v) return; for(const k of ['lama', 'chip', 'main', 'metal', 'over', 'assist']) delete b[k]; b.forma = v; });
+    deckSheet();
+  },
+  slotClear: el => {
+    const me = deckMe(); if(!me) return;
+    const i = +el.dataset.v, dk = deckOf(me), before = dk.beys[i];
+    dk.beys[i] = null; saveDeck(me); render();
+    toast(`Bey ${i + 1} svuotato`, () => { deckOf(me).beys[i] = before; saveDeck(me); render(); });
+  },
+  pickList: el => { const ed = ui.deckEdit; Object.assign(ed, {view:'list', k:el.dataset.k, q:'', f:'', scroll:0}); deckSheet(); },
+  partFilter: el => {
+    ui.deckEdit.f = el.dataset.v;
+    document.querySelectorAll('[data-act=partFilter]').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
+    partFilter();
+  },
+  partInfo: el => { const ed = ui.deckEdit; ed.scroll = $('#sheetCard').scrollTop; ed.view = 'part'; ed.id = el.dataset.v; deckSheet(); },
+  deckBack: () => { const ed = ui.deckEdit; ed.view = ed.view === 'part' ? 'list' : 'slot'; deckSheet(); },
+  partUse: () => {
+    const ed = ui.deckEdit, me = deckMe(); if(!ed || !me) return;
+    if(partBlock(CAT, deckOf(me).beys, ed.i, ed.k, ed.id)) return;
+    editBey(b => { b.forma = beyForma(b); b[ed.k] = ed.id; });
+    ed.view = 'slot'; deckSheet();
+  },
+  partRemove: () => { const ed = ui.deckEdit; editBey(b => { delete b[ed.k]; }); ed.view = 'slot'; deckSheet(); },
   codeOff: () => confirmBox('Bloccare questo telefono?', nPending() ? `Ci sono ${nPending()} modifiche non ancora inviate: partiranno solo dopo aver reinserito il codice.` : 'Potrai solo guardare finché non reinserisci il codice.', 'Blocca', () => { code = null; lsSet(LS_CODE, null); store.writable = false; render(); })
 };
 document.addEventListener('click', e => {
@@ -1059,7 +1379,11 @@ document.addEventListener('change', e => {
   if(el.dataset.w){ L.settings = {...(L.settings || {}), weights:{...weights(), [el.dataset.w]:+el.value}}; saveLeague(); render(); }
   if(el.dataset.rename){ const p = L.players.find(x => x.id === el.dataset.rename); const v = el.value.trim(); if(p && v && v !== p.name){ p.name = v; saveLeague(); render(); } }
 });
-document.addEventListener('input', e => { const el = e.target; if(el.dataset.w){ el.parentElement.querySelector('b').textContent = el.value; } });
+document.addEventListener('input', e => {
+  const el = e.target;
+  if(el.dataset.w){ el.parentElement.querySelector('b').textContent = el.value; }
+  if(el.id === 'partQ' && ui.deckEdit){ ui.deckEdit.q = el.value; partFilter(); }
+});
 document.addEventListener('focusout', () => { if(pendingRender) setTimeout(() => { if(pendingRender) safeRender(); }, 0); });
 document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); if(e.key === 'Enter' && e.target.id === 'codeIn') ACT.codeOn(); });
 
